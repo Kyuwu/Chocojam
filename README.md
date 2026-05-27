@@ -2,6 +2,10 @@
 
 Choco headbops to the beat of whatever's playing on your system audio. Drop the overlay into a transparent browser source for a live reactive stream overlay.
 
+## Preview
+
+https://lightless.media/u/hUkluCcR.mp4
+
 ---
 
 ## How it works
