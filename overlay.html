@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Choco Headbop</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      background: transparent;
+      overflow: hidden;
+    }
+
+    /* Wander layer — handles horizontal position + facing direction.
+       Smooth transition gives every position change a hop-arc feel. */
+    #wander {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%) scaleX(1);
+      transform-origin: bottom center;
+      transition: transform 620ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      max-height: 100vh;
+      max-width: 100vw;
+      will-change: transform;
+    }
+
+    /* Hop layer — bounces vertically on each step */
+    #hop {
+      transform-origin: bottom center;
+      will-change: transform;
+    }
+    .hopping {
+      animation: hop 620ms cubic-bezier(0.34, 1.4, 0.64, 1.1);
+    }
+    @keyframes hop {
+      0%   { transform: translateY(0); }
+      45%  { transform: translateY(-22%); }
+      100% { transform: translateY(0); }
+    }
+
+    /* Breath layer — continuous ambient breathing */
+    #breath {
+      animation: breathe 3.2s ease-in-out infinite;
+      transform-origin: bottom center;
+    }
+    @keyframes breathe {
+      0%, 100% { transform: scale(1.000); }
+      50%      { transform: scale(1.018); }
+    }
+
+    /* Goat — per-beat bop */
+    #goat {
+      display: block;
+      max-height: 100vh;
+      max-width: 100vw;
+      transform-origin: bottom center;
+      will-change: transform, filter;
+      user-select: none;
+      pointer-events: none;
+      filter: drop-shadow(0 0 0 rgba(255, 220, 130, 0));
+    }
+    .bop {
+      animation: bop 280ms cubic-bezier(0.18, 0.89, 0.32, 1.28);
+    }
+    @keyframes bop {
+      0%   { transform: translateY(0)    scale(1.00) rotate(0deg);
+             filter: drop-shadow(0 0 6px rgba(255, 220, 130, 0.85)); }
+      30%  { transform: translateY(-7%)  scale(1.06) rotate(-3deg);
+             filter: drop-shadow(0 0 18px rgba(255, 220, 130, 0.9)); }
+      60%  { transform: translateY(-1.5%) scale(1.02) rotate(2deg);
+             filter: drop-shadow(0 0 10px rgba(255, 220, 130, 0.4)); }
+      100% { transform: translateY(0)    scale(1.00) rotate(0deg);
+             filter: drop-shadow(0 0 0 rgba(255, 220, 130, 0)); }
+    }
+
+    /* Bubble layer — small colored goats drifting around */
+    #bubbles {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .bubble {
+      position: absolute;
+      bottom: 15%;
+      height: 48px;
+      width: auto;
+      opacity: 0;
+      animation: float-drift linear forwards;
+      will-change: transform, opacity;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+    }
+
+    @keyframes float-drift {
+      0%   { opacity: 0; transform: translate(0, 0) rotate(0deg) scale(0.5); }
+      15%  { opacity: 1; transform: translate(var(--drift-x-15), var(--drift-y-15))  rotate(var(--rot-15))  scale(1); }
+      80%  { opacity: 1; transform: translate(var(--drift-x-80), var(--drift-y-80))  rotate(var(--rot-80))  scale(1); }
+      100% { opacity: 0; transform: translate(var(--drift-x-100), var(--drift-y-100)) rotate(var(--rot-100)) scale(0.7); }
+    }
+
+    /* Tiny offline indicator */
+    #status {
+      position: absolute;
+      bottom: 6px;
+      right: 8px;
+      font: 11px/1 system-ui, sans-serif;
+      color: rgba(255, 100, 100, 0.85);
+      text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+      display: none;
+    }
+    #status.show { display: block; }
+  </style>
+</head>
+<body>
+  <div id="bubbles"></div>
+  <div id="wander">
+    <div id="hop">
+      <div id="breath">
+        <img id="goat" src="choco_coco_transparent.png" alt="choco" />
+      </div>
+    </div>
+  </div>
+  <div id="status">offline — start beats.py</div>
+
+  <script>
+    const goat    = document.getElementById('goat');
+    const wander  = document.getElementById('wander');
+    const hop     = document.getElementById('hop');
+    const bubbles = document.getElementById('bubbles');
+    const status  = document.getElementById('status');
+
+    // ── Wandering ───────────────────────────────────────────────────────
+    let posOffset = 0;     // offset from center, in vw (−MAX..+MAX)
+    let facing    = 1;     // 1 = right, -1 = left
+    const MAX_OFFSET = 35; // don't wander past this from center
+
+    // The source image natively faces LEFT, so we apply -facing to scaleX:
+    // facing = 1  (intended: right) → scaleX(-1) flips the native left image to face right
+    // facing = -1 (intended: left)  → scaleX(1)  uses native left orientation
+    function applyTransform() {
+      wander.style.transform = `translateX(calc(-50% + ${posOffset}vw)) scaleX(${-facing})`;
+    }
+    applyTransform();
+
+    function triggerHop() {
+      hop.classList.remove('hopping');
+      void hop.offsetWidth;          // force reflow → restart animation
+      hop.classList.add('hopping');
+    }
+
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+    function wait(ms)       { return new Promise(r => setTimeout(r, ms)); }
+
+    async function step(dx) {
+      const target = posOffset + dx;
+      if (target > MAX_OFFSET || target < -MAX_OFFSET) {
+        // hit invisible wall → turn around instead of stepping
+        await turnAround();
+        return false;
+      }
+      posOffset = target;
+      applyTransform();
+      triggerHop();
+      await wait(620);
+      return true;
+    }
+
+    async function turnAround() {
+      facing = -facing;
+      applyTransform();
+      triggerHop();
+      await wait(620);
+    }
+
+    async function behaviorLoop() {
+      // Tiny initial pause so she settles before doing anything
+      await wait(800);
+      while (true) {
+        await wait(rand(1000, 3000));
+        const r = Math.random();
+
+        if (r < 0.55) {
+          // walk a few steps in the current facing direction
+          const steps    = Math.floor(rand(2, 5));   // 2–4 steps
+          const stepSize = rand(3.5, 6.5) * facing;
+          for (let i = 0; i < steps; i++) {
+            const ok = await step(stepSize);
+            if (!ok) break;                          // bumped wall, abort
+          }
+        } else if (r < 0.78) {
+          // spin around
+          await turnAround();
+        } else if (r < 0.92) {
+          // excited double-hop in place
+          triggerHop();
+          await wait(720);
+          triggerHop();
+          await wait(720);
+        } else {
+          // single happy hop
+          triggerHop();
+          await wait(720);
+        }
+      }
+    }
+    behaviorLoop();
+
+    // ── Bubbles ─────────────────────────────────────────────────────────
+    function spawnBubble({ burst = false } = {}) {
+      const el = document.createElement('img');
+      el.className = 'bubble';
+      el.src       = 'choco_coco_transparent.png';
+      el.alt       = '';
+
+      // Spawn around the goat's CURRENT position so bubbles follow her
+      const startX = 50 + posOffset + rand(-15, 15);
+      el.style.left = startX + 'vw';
+
+      const driftX = rand(-180, 180);
+      const driftY = rand(-65, 5);
+
+      el.style.setProperty('--drift-x-15',  (driftX * 0.15) + 'px');
+      el.style.setProperty('--drift-x-80',  (driftX * 0.80) + 'px');
+      el.style.setProperty('--drift-x-100', (driftX * 1.00) + 'px');
+      el.style.setProperty('--drift-y-15',  (driftY * 0.15) + 'vh');
+      el.style.setProperty('--drift-y-80',  (driftY * 0.80) + 'vh');
+      el.style.setProperty('--drift-y-100', (driftY * 1.00) + 'vh');
+
+      const spin = rand(-360, 360);
+      el.style.setProperty('--rot-15',  (spin * 0.15) + 'deg');
+      el.style.setProperty('--rot-80',  (spin * 0.80) + 'deg');
+      el.style.setProperty('--rot-100', (spin * 1.00) + 'deg');
+
+      el.style.height = rand(burst ? 36 : 26, burst ? 64 : 52) + 'px';
+
+      const hue = Math.floor(rand(0, 360));
+      const sat = rand(0.7, 1.6).toFixed(2);
+      const bri = rand(0.9, 1.2).toFixed(2);
+      el.style.filter = `hue-rotate(${hue}deg) saturate(${sat}) brightness(${bri}) drop-shadow(0 2px 4px rgba(0,0,0,0.3))`;
+
+      const duration = rand(2600, 4500);
+      el.style.animationDuration = duration + 'ms';
+
+      bubbles.appendChild(el);
+      setTimeout(() => el.remove(), duration + 100);
+    }
+
+    function bop(intensity = 1) {
+      goat.classList.remove('bop');
+      void goat.offsetWidth;
+      goat.classList.add('bop');
+
+      const count = Math.round(2 + intensity * 3);
+      for (let i = 0; i < count; i++) {
+        setTimeout(() => spawnBubble({ burst: true }), i * 40);
+      }
+    }
+
+    function scheduleAmbientBubble() {
+      spawnBubble();
+      setTimeout(scheduleAmbientBubble, rand(800, 2200));
+    }
+    scheduleAmbientBubble();
+
+    // ── WebSocket ───────────────────────────────────────────────────────
+    function connect() {
+      const ws = new WebSocket('ws://127.0.0.1:7321');
+
+      ws.onopen    = () => status.classList.remove('show');
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'beat') bop(msg.intensity ?? 1);
+        } catch (_) { /* ignore */ }
+      };
+      ws.onclose = () => {
+        status.classList.add('show');
+        setTimeout(connect, 1500);
+      };
+      ws.onerror = () => ws.close();
+    }
+    connect();
+  </script>
+</body>
+</html>
